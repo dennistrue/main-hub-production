@@ -1,0 +1,24 @@
+{
+  "version": "v1.2",
+  "git_commit": "cf36e57",
+  "environment": "esp32dev",
+  "built_at": "20251106T225836Z",
+  "factory_ssid": "Main0000",
+  "ap_password": "12345678",
+  "target_ip": "192.168.4.1",
+  "flash_encryption": "enabled",
+  "artifacts": {
+    "bootloader": "encrypted/bootloader.enc.bin",
+    "boot_app0": "encrypted/boot_app0.enc.bin",
+    "partitions": "encrypted/partitions.enc.bin",
+    "firmware": "encrypted/firmware.enc.bin",
+    "spiffs": "encrypted/spiffs.enc.bin"
+  },
+  "encrypted_artifacts": {
+    "bootloader": "encrypted/bootloader.enc.bin",
+    "boot_app0": "encrypted/boot_app0.enc.bin",
+    "partitions": "encrypted/partitions.enc.bin",
+    "firmware": "encrypted/firmware.enc.bin",
+    "spiffs": "encrypted/spiffs.enc.bin"
+  }
+}
