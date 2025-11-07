@@ -3,21 +3,22 @@ set -euo pipefail
 
 usage() {
   cat <<USAGE
-Usage: ./flash_main_hub.sh --serial <serial> --password <softap-password> [--port <serial-port>] [--skip-ssid]
+Usage: ./flash_main_hub.sh --serial <serial> --password <softap-password> [--port <serial-port>] [--wifi-provision]
 
 Arguments:
   --serial, -s      Required per-unit serial suffix (alphanumeric/_/-).
   --password, -w    Required SoftAP password (8-63 ASCII characters).
   --port, -p        Serial/USB port (default \$MAIN_HUB_SERIAL_PORT or /dev/cu.SLAB_USBtoUART).
-  --skip-ssid       Skip Wi-Fi provisioning after flashing.
+  --wifi-provision  Rejoin the factory SSID and call /debug/update after flashing (default: off).
+  --skip-ssid       Legacy alias for disabling Wi-Fi provisioning (now the default).
   --help, -h        Show this message.
 USAGE
 }
 
 SERIAL=""
-PORT="${MAIN_HUB_SERIAL_PORT:-/dev/cu.SLAB_USBtoUART}"
+PORT="${MAIN_HUB_SERIAL_PORT:-auto}"
 AP_PASSWORD="${MAIN_HUB_AP_PASSWORD:-}"
-SKIP_SSID=0
+WIFI_PROVISION="${MAIN_HUB_WIFI_PROVISION:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,8 +34,12 @@ while [[ $# -gt 0 ]]; do
       AP_PASSWORD="${2:-}"
       shift 2
       ;;
+    --wifi-provision)
+      WIFI_PROVISION=1
+      shift
+      ;;
     --skip-ssid)
-      SKIP_SSID=1
+      WIFI_PROVISION=0
       shift
       ;;
     -h|--help)
@@ -61,6 +66,27 @@ if [[ ${#SERIAL} -gt 50 ]]; then
   echo "Error: serial exceeds maximum supported length (50 characters)." >&2
   exit 1
 fi
+
+sanitize_serial_suffix() {
+  python3 - "$1" <<'PY'
+import sys
+value = sys.argv[1]
+filtered = []
+for ch in value:
+    if ch.isalnum() or ch in "_-":
+        filtered.append(ch)
+sanitized = "".join(filtered)[:28]
+if not sanitized:
+    raise SystemExit("Serial suffix must retain at least one valid character after sanitization.")
+print(sanitized)
+PY
+}
+
+SERIAL_SANITIZED="$(sanitize_serial_suffix "${SERIAL}")"
+if [[ "${SERIAL_SANITIZED}" != "${SERIAL}" ]]; then
+  echo "Serial sanitized to '${SERIAL_SANITIZED}' for factory config."
+fi
+SERIAL="${SERIAL_SANITIZED}"
 
 if [[ -z "${AP_PASSWORD}" ]]; then
   read -r -s -p "Enter SoftAP password (8-63 ASCII characters): " AP_PASSWORD
@@ -91,6 +117,10 @@ ESPSECURE_TOOL=""
 FLASH_ENCRYPTION_KEY_FILE="${FLASH_ENCRYPTION_KEY_FILE:-${PRODUCTION_ROOT}/keys/flash_encryption_key.bin}"
 FLASH_ENCRYPTION_ENABLED="${FLASH_ENCRYPTION_ENABLED:-1}"
 LOG_DIR="${PRODUCTION_ROOT}/logs"
+FACTORY_CFG_TOOL="${PRODUCTION_ROOT}/tools/gen_factory_payload.py"
+FACTORY_PARTITION_SIZE_HEX="${FACTORY_PARTITION_SIZE:-0x10000}"
+FACTORY_CFG_PLAIN_PATH=""
+FACTORY_CFG_FLASH_PATH=""
 mkdir -p "${LOG_DIR}"
 
 TEMP_FILES=()
@@ -103,10 +133,100 @@ cleanup() {
 trap cleanup EXIT
 
 list_port_holders() {
+  if [[ "${PORT}" == "auto" ]]; then
+    return 0
+  fi
   if ! command -v lsof >/dev/null 2>&1; then
     return 0
   fi
   lsof -n "${PORT}" 2>/dev/null | awk 'NR>1 {printf "%s\t%s\t%s\n", $1, $2, $3}'
+}
+
+collect_serial_candidates() {
+  local -a candidates=()
+  shopt -s nullglob
+  local pattern dev existing skip
+  for pattern in /dev/cu.usbserial-* /dev/cu.SLAB_USBtoUART /dev/cu.SLAB_USB* /dev/cu.wchusbserial* /dev/cu.usbmodem*; do
+    for dev in $pattern; do
+      [[ -c "${dev}" ]] || continue
+      skip=0
+      for existing in "${candidates[@]}"; do
+        if [[ "${existing}" == "${dev}" ]]; then
+          skip=1
+          break
+        fi
+      done
+      if (( ! skip )); then
+        candidates+=("${dev}")
+      fi
+    done
+  done
+  shopt -u nullglob
+  printf '%s\n' "${candidates[@]}"
+}
+
+auto_select_serial_port() {
+  local interactive="${1:-1}"
+  local candidates=()
+  while IFS= read -r dev; do
+    candidates+=("${dev}")
+  done < <(collect_serial_candidates)
+
+  local count="${#candidates[@]}"
+  if (( count == 0 )); then
+    if (( interactive )); then
+      echo "No USB serial devices detected. Connect a board or pass --port." >&2
+    fi
+    return 1
+  fi
+
+  if (( count == 1 )); then
+    PORT="${candidates[0]}"
+    if (( interactive )); then
+      echo "Auto-selected serial port ${PORT}"
+    fi
+    return 0
+  fi
+
+  if (( ! interactive )); then
+    return 2
+  fi
+
+  echo "Multiple USB serial devices detected:"
+  local idx=1
+  for dev in "${candidates[@]}"; do
+    printf '  [%d] %s\n' "${idx}" "${dev}"
+    idx=$((idx + 1))
+  done
+  while true; do
+    read -r -p "Select port [1-${count}] or enter a device path: " choice
+    if [[ -z "${choice}" ]]; then
+      continue
+    fi
+    if [[ "${choice}" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+      PORT="${candidates[choice-1]}"
+      break
+    elif [[ -e "${choice}" ]]; then
+      PORT="${choice}"
+      break
+    else
+      echo "Invalid selection. Provide a number from the list or a valid device path." >&2
+    fi
+  done
+  echo "Using serial port ${PORT}"
+  return 0
+}
+
+resolve_serial_port() {
+  if [[ -z "${PORT}" || "${PORT}" == "auto" ]]; then
+    auto_select_serial_port 1 || PORT="auto"
+    return
+  fi
+  if [[ ! -e "${PORT}" ]]; then
+    echo "Serial port ${PORT} not found; attempting auto-detect..." >&2
+    PORT="auto"
+    auto_select_serial_port 1 || PORT="auto"
+  fi
 }
 
 diagnose_serial_port_failure() {
@@ -128,6 +248,21 @@ ensure_serial_port_ready() {
   local wait_attempts="${MAIN_HUB_PORT_WAIT_ATTEMPTS:-10}"
   local attempt
   for ((attempt = 1; attempt <= wait_attempts; attempt++)); do
+    if [[ "${PORT}" == "auto" || -z "${PORT}" ]]; then
+      local rc
+      auto_select_serial_port 0
+      rc=$?
+      if [[ "${rc}" == "0" ]]; then
+        continue
+      elif [[ "${rc}" == "2" ]]; then
+        if auto_select_serial_port 1; then
+          continue
+        fi
+      fi
+      echo "Waiting for USB serial device to appear (${attempt}/${wait_attempts})..." >&2
+      sleep 1
+      continue
+    fi
     if [[ ! -e "${PORT}" ]]; then
       echo "Waiting for serial port ${PORT} to appear (${attempt}/${wait_attempts})..." >&2
       sleep 1
@@ -183,6 +318,137 @@ if [[ ! -d "${RELEASES_DIR}" ]]; then
   echo "Error: release directory missing at ${RELEASES_DIR}." >&2
   exit 1
 fi
+
+resolve_serial_port
+
+get_file_size() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    echo "Verification error: missing file ${file}" >&2
+    return 1
+  fi
+  if stat -f%z "${file}" >/dev/null 2>&1; then
+    stat -f%z "${file}"
+  else
+    stat -c%s "${file}"
+  fi
+}
+
+verify_factory_payload_plain() {
+  local file="$1"
+  python3 - "$file" "$SERIAL" "$AP_PASSWORD" <<'PY'
+import binascii, struct, sys
+path, expected_serial, expected_password = sys.argv[1:4]
+MAGIC = 0x46504346
+HEADER_STRUCT = struct.Struct("<IHH")
+SERIAL_FIELD_LEN = 32
+PASSWORD_FIELD_LEN = 64
+RESERVED_LEN = 48
+CRC_STRUCT = struct.Struct("<I")
+
+with open(path, "rb") as fh:
+    blob = fh.read(HEADER_STRUCT.size + SERIAL_FIELD_LEN + PASSWORD_FIELD_LEN + RESERVED_LEN + CRC_STRUCT.size)
+
+min_len = HEADER_STRUCT.size + SERIAL_FIELD_LEN + PASSWORD_FIELD_LEN + RESERVED_LEN + CRC_STRUCT.size
+if len(blob) < min_len:
+    raise SystemExit("Factory payload truncated.")
+
+magic, version, flags = HEADER_STRUCT.unpack(blob[:HEADER_STRUCT.size])
+if magic != MAGIC:
+    raise SystemExit(f"Factory payload magic mismatch: 0x{magic:08x}")
+
+serial_start = HEADER_STRUCT.size
+serial_end = serial_start + SERIAL_FIELD_LEN
+password_end = serial_end + PASSWORD_FIELD_LEN
+reserved_end = password_end + RESERVED_LEN
+stored_crc, = CRC_STRUCT.unpack(blob[reserved_end:reserved_end + CRC_STRUCT.size])
+calc_crc = binascii.crc32(blob[:reserved_end]) & 0xFFFFFFFF
+if calc_crc != stored_crc:
+    raise SystemExit("Factory payload CRC mismatch.")
+
+serial = blob[serial_start:serial_end].split(b'\x00', 1)[0].decode('ascii', errors='ignore')
+password = blob[serial_end:password_end].split(b'\x00', 1)[0].decode('ascii', errors='ignore')
+if serial != expected_serial:
+    raise SystemExit(f"Factory payload serial mismatch (got '{serial}' expected '{expected_serial}').")
+if password != expected_password:
+    raise SystemExit("Factory payload password mismatch.")
+
+print(f"Factory payload verified (serial={serial}, version={version}, flags={flags}).")
+PY
+}
+
+prepare_factory_payload() {
+  if [[ ! -x "${FACTORY_CFG_TOOL}" ]]; then
+    echo "Error: factory payload generator missing at ${FACTORY_CFG_TOOL}. Run build_output.sh." >&2
+    exit 1
+  fi
+
+  local plaintext
+  plaintext="$(mktemp)"
+  TEMP_FILES+=("${plaintext}")
+  python3 "${FACTORY_CFG_TOOL}" \
+    --serial "${SERIAL}" \
+    --password "${AP_PASSWORD}" \
+    --partition-size "${FACTORY_PARTITION_SIZE_HEX}" \
+    --output "${plaintext}"
+  FACTORY_CFG_PLAIN_PATH="${plaintext}"
+  verify_factory_payload_plain "${FACTORY_CFG_PLAIN_PATH}"
+
+  if [[ "${FLASH_ENCRYPTION_ENABLED}" == "1" ]]; then
+    ensure_espsecure
+    local encrypted
+    encrypted="$(mktemp)"
+    TEMP_FILES+=("${encrypted}")
+    "${ESPSECURE_PYTHON}" "${ESPSECURE_TOOL}" encrypt_flash_data \
+      --keyfile "${FLASH_ENCRYPTION_KEY_FILE}" \
+      --address 0x3F0000 \
+      --output "${encrypted}" \
+      "${FACTORY_CFG_PLAIN_PATH}"
+    FACTORY_CFG_FLASH_PATH="${encrypted}"
+  else
+    FACTORY_CFG_FLASH_PATH="${FACTORY_CFG_PLAIN_PATH}"
+  fi
+}
+
+verify_flash_plan() {
+  local layout=(
+    "bootloader;0x1000;0x8000;${BOOTLOADER_BIN}"
+    "partitions;0x8000;0x9000;${PARTITIONS_BIN}"
+    "boot_app0;0xe000;0x10000;${BOOT_APP0_BIN}"
+    "firmware;0x10000;0x150000;${FIRMWARE_BIN}"
+    "spiffs;0x290000;0x3F0000;${SPIFFS_BIN}"
+    "factory_cfg;0x3F0000;0x400000;${FACTORY_CFG_FLASH_PATH}"
+  )
+  local ok=1
+  echo "Verifying flash layout and region sizes..."
+  local entry
+  for entry in "${layout[@]}"; do
+    IFS=';' read -r name start_hex end_hex path <<<"${entry}"
+    if [[ -z "${path}" ]]; then
+      echo "Verification error: path for ${name} not set." >&2
+      ok=0
+      continue
+    fi
+    local start=$((start_hex))
+    local end=$((end_hex))
+    local max_size=$((end - start))
+    local size
+    if ! size="$(get_file_size "${path}")"; then
+      ok=0
+      continue
+    fi
+    printf '  %-11s %10d bytes (limit %d)\n' "${name}" "${size}" "${max_size}"
+    if (( size > max_size )); then
+      echo "Verification error: ${name} exceeds allocated size." >&2
+      ok=0
+    fi
+  done
+  if (( ok )); then
+    echo "Flash plan validated."
+    return 0
+  fi
+  return 1
+}
 
 
 select_tool_binaries() {
@@ -319,11 +585,13 @@ emit('ART_BOOT_APP0', arts.get('boot_app0'))
 emit('ART_PARTITIONS', arts.get('partitions'))
 emit('ART_FIRMWARE', arts.get('firmware'))
 emit('ART_SPIFFS', arts.get('spiffs'))
+emit('ART_FACTORY_CFG', arts.get('factory_cfg'))
 emit_optional('ENC_BOOTLOADER', encs.get('bootloader'))
 emit_optional('ENC_BOOT_APP0', encs.get('boot_app0'))
 emit_optional('ENC_PARTITIONS', encs.get('partitions'))
 emit_optional('ENC_FIRMWARE', encs.get('firmware'))
 emit_optional('ENC_SPIFFS', encs.get('spiffs'))
+emit_optional('ENC_FACTORY_CFG', encs.get('factory_cfg'))
 PY
 )" || {
   echo "Error: manifest missing required fields." >&2
@@ -335,13 +603,14 @@ BOOT_APP0_BIN="${RELEASES_DIR}/${ART_BOOT_APP0}"
 PARTITIONS_BIN="${RELEASES_DIR}/${ART_PARTITIONS}"
 FIRMWARE_BIN="${RELEASES_DIR}/${ART_FIRMWARE}"
 SPIFFS_BIN="${RELEASES_DIR}/${ART_SPIFFS}"
+FACTORY_CFG_TEMPLATE_BIN="${RELEASES_DIR}/${ART_FACTORY_CFG}"
 
 ENC_BOOTLOADER_BIN=""
 ENC_BOOT_APP0_BIN=""
 ENC_PARTITIONS_BIN=""
 ENC_FIRMWARE_BIN=""
 ENC_SPIFFS_BIN=""
-
+ENC_FACTORY_CFG_BIN=""
 if [[ -n "${ENC_BOOTLOADER:-}" ]]; then
   ENC_BOOTLOADER_BIN="${RELEASES_DIR}/${ENC_BOOTLOADER}"
 fi
@@ -356,6 +625,9 @@ if [[ -n "${ENC_FIRMWARE:-}" ]]; then
 fi
 if [[ -n "${ENC_SPIFFS:-}" ]]; then
   ENC_SPIFFS_BIN="${RELEASES_DIR}/${ENC_SPIFFS}"
+fi
+if [[ -n "${ENC_FACTORY_CFG:-}" ]]; then
+  ENC_FACTORY_CFG_BIN="${RELEASES_DIR}/${ENC_FACTORY_CFG}"
 fi
 
 select_artifact_path() {
@@ -395,6 +667,7 @@ BOOT_APP0_BIN="$(choose_or_fail "${ENC_BOOT_APP0_BIN}" "${BOOT_APP0_BIN}" "boot_
 PARTITIONS_BIN="$(choose_or_fail "${ENC_PARTITIONS_BIN}" "${PARTITIONS_BIN}" "partitions")"
 FIRMWARE_BIN="$(choose_or_fail "${ENC_FIRMWARE_BIN}" "${FIRMWARE_BIN}" "firmware")"
 SPIFFS_BIN="$(choose_or_fail "${ENC_SPIFFS_BIN}" "${SPIFFS_BIN}" "spiffs")"
+FACTORY_CFG_TEMPLATE_BIN="$(choose_or_fail "${ENC_FACTORY_CFG_BIN}" "${FACTORY_CFG_TEMPLATE_BIN}" "factory_cfg")"
 
 if [[ "${FLASH_ENCRYPTION_ENABLED}" == "1" ]]; then
   USE_PRE_ENCRYPTED=1
@@ -452,6 +725,12 @@ else
   echo "Flash encryption disabled for this run; writing plaintext images."
 fi
 
+prepare_factory_payload
+if [[ -z "${FACTORY_CFG_FLASH_PATH}" ]]; then
+  echo "Error: failed to prepare factory configuration payload." >&2
+  exit 1
+fi
+
 flash_cmd=(
   "${ESPTOOL}"
   --chip esp32
@@ -481,9 +760,15 @@ flash_cmd+=(
   0xe000 "${BOOT_APP0_BIN}"
   0x10000 "${FIRMWARE_BIN}"
   0x290000 "${SPIFFS_BIN}"
+  0x3F0000 "${FACTORY_CFG_FLASH_PATH}"
 )
 
 ensure_serial_port_ready
+
+if ! verify_flash_plan; then
+  echo "Flash plan verification failed; aborting before touching hardware." >&2
+  exit 1
+fi
 
 echo "Flashing bundle $(basename "${RELEASES_DIR}") to ${PORT}..."
 "${flash_cmd[@]}"
@@ -555,15 +840,15 @@ provision_serial() {
   restore_wifi_after_provision
 }
 
-if (( SKIP_SSID == 0 )); then
+if (( WIFI_PROVISION == 1 )); then
   if provision_serial; then
-    log_entry "success"
+    log_entry "wifi_success"
   else
-    echo "Warning: SSID provisioning failed; flash logged only." >&2
-    log_entry "flash_only"
+    echo "Warning: SSID provisioning failed after flash; wiring already updated." >&2
+    log_entry "wifi_failed"
   fi
 else
-  log_entry "flash_only"
+  log_entry "wired_only"
 fi
 
 echo "Done."

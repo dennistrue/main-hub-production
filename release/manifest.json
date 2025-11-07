@@ -1,8 +1,8 @@
 {
   "version": "v1.2",
-  "git_commit": "cf36e57",
+  "git_commit": "4d8527b",
   "environment": "esp32dev",
-  "built_at": "20251106T225836Z",
+  "built_at": "20251107T073150Z",
   "factory_ssid": "Main0000",
   "ap_password": "12345678",
   "target_ip": "192.168.4.1",
@@ -12,13 +12,15 @@
     "boot_app0": "encrypted/boot_app0.enc.bin",
     "partitions": "encrypted/partitions.enc.bin",
     "firmware": "encrypted/firmware.enc.bin",
-    "spiffs": "encrypted/spiffs.enc.bin"
+    "spiffs": "encrypted/spiffs.enc.bin",
+    "factory_cfg": "encrypted/factorycfg.enc.bin"
   },
   "encrypted_artifacts": {
     "bootloader": "encrypted/bootloader.enc.bin",
     "boot_app0": "encrypted/boot_app0.enc.bin",
     "partitions": "encrypted/partitions.enc.bin",
     "firmware": "encrypted/firmware.enc.bin",
-    "spiffs": "encrypted/spiffs.enc.bin"
+    "spiffs": "encrypted/spiffs.enc.bin",
+    "factory_cfg": "encrypted/factorycfg.enc.bin"
   }
 }
