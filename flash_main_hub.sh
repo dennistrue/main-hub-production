@@ -150,7 +150,7 @@ collect_serial_candidates() {
     for dev in $pattern; do
       [[ -c "${dev}" ]] || continue
       skip=0
-      for existing in "${candidates[@]}"; do
+      for existing in "${candidates[@]:-}"; do
         if [[ "${existing}" == "${dev}" ]]; then
           skip=1
           break
@@ -167,7 +167,7 @@ collect_serial_candidates() {
 
 auto_select_serial_port() {
   local interactive="${1:-1}"
-  local candidates=()
+  local -a candidates=()
   while IFS= read -r dev; do
     candidates+=("${dev}")
   done < <(collect_serial_candidates)
@@ -526,15 +526,75 @@ detect_espsecure_tool() {
   return 1
 }
 
+locate_espsecure_module() {
+  if [[ -z "${ESPSECURE_PYTHON}" ]]; then
+    return 1
+  fi
+  local module_path
+  if ! module_path="$("${ESPSECURE_PYTHON}" - <<'PY' 2>/dev/null
+import importlib
+import sys
+try:
+    mod = importlib.import_module("esptool.espsecure")
+except ImportError:
+    raise SystemExit(1)
+print(mod.__file__)
+PY
+)"; then
+    return 1
+  fi
+  if [[ -f "${module_path}" ]]; then
+    ESPSECURE_TOOL="${module_path}"
+    return 0
+  fi
+  return 1
+}
+
+ensure_pip_for_python() {
+  if "${ESPSECURE_PYTHON}" -m pip --version >/dev/null 2>&1; then
+    return 0
+  fi
+  if "${ESPSECURE_PYTHON}" -m ensurepip --upgrade >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+install_esptool_module() {
+  if [[ -z "${ESPSECURE_PYTHON}" ]]; then
+    return 1
+  fi
+  if ! ensure_pip_for_python; then
+    echo "Error: unable to bootstrap pip for ${ESPSECURE_PYTHON}. Install pip manually." >&2
+    return 1
+  fi
+  echo "Installing 'esptool' Python package for factory payload encryption..." >&2
+  if ! "${ESPSECURE_PYTHON}" -m pip install --user --upgrade esptool >/dev/null; then
+    echo "Error: pip failed to install 'esptool'. Install it manually and retry." >&2
+    return 1
+  fi
+  return 0
+}
+
 ensure_espsecure() {
   if ! detect_espsecure_python; then
     echo "Error: unable to locate python interpreter for espsecure.py." >&2
     exit 1
   fi
-  if ! detect_espsecure_tool; then
-    echo "Error: unable to locate espsecure.py tool." >&2
-    exit 1
+  if detect_espsecure_tool; then
+    return 0
   fi
+  if locate_espsecure_module; then
+    return 0
+  fi
+  if install_esptool_module && locate_espsecure_module; then
+    return 0
+  fi
+  if detect_espsecure_tool; then
+    return 0
+  fi
+  echo "Error: unable to locate espsecure.py tool even after attempting installation." >&2
+  exit 1
 }
 
 select_tool_binaries
@@ -736,9 +796,9 @@ flash_cmd=(
   --chip esp32
   --port "${PORT}"
   --baud "${MAIN_HUB_FLASH_BAUD:-921600}"
-  --before default_reset
-  --after hard_reset
-  write_flash
+  --before default-reset
+  --after hard-reset
+  write-flash
 )
 
 if [[ "${FLASH_ENCRYPTION_ENABLED}" == "1" ]]; then
@@ -752,9 +812,9 @@ else
 fi
 
 flash_cmd+=(
-  --flash_mode dio
-  --flash_freq 40m
-  --flash_size detect
+  --flash-mode dio
+  --flash-freq 40m
+  --flash-size detect
   0x1000 "${BOOTLOADER_BIN}"
   0x8000 "${PARTITIONS_BIN}"
   0xe000 "${BOOT_APP0_BIN}"
