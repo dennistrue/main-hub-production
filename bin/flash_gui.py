@@ -66,7 +66,7 @@ class PasswordDatabase:
             password = self.entries[(batch, serial)]
         except KeyError as exc:
             raise ValueError(f"No password entry for batch {batch} serial {serial:04d}.") from exc
-        serial_suffix = f"{batch}{serial:04d}"
+        serial_suffix = f"{batch:02d}{serial:04d}"
         ssid = f"Main{serial_suffix}"
         return {
             "batch": batch,
@@ -104,7 +104,7 @@ INDEX_HTML = """<!DOCTYPE html>
 </head>
 <body>
   <h1>Main Hub Flasher</h1>
-  <p>Select a batch and serial number (001-100). Passwords are auto-assigned, and the SSID will be <strong>Main&lt;batch&gt;&lt;serial&gt;</strong>.</p>
+  <p>Select a batch (shown as two digits, e.g., 01) and serial number (001-100). Passwords are auto-assigned, and the SSID will be <strong>Main&lt;batch&gt;&lt;serial&gt;</strong>.</p>
   <form id="flash-form">
     <div class="row">
       <div>

@@ -17,8 +17,8 @@ python3 flash_gui.py
 
 The script starts a tiny local web server, opens your default browser, and prompts for a batch number plus the serial index (001‑100). It automatically derives:
 
-- Serial suffix: `<batch><serial_in_batch padded to 4 digits>`
-- SSID: `Main<batch><serial_in_batch padded to 4 digits>`
+- Serial suffix: `<batch (two digits)><serial_in_batch padded to 4 digits>` (e.g. batch 1, serial 7 ⇒ `010007`)
+- SSID: `Main<batch (two digits)><serial_in_batch padded to 4 digits>` (e.g. `Main010007`)
 - Password: looked up from the local password database
 
 Hit **Next** to advance to the next serial within the same batch (up to 100). When you click **Flash**, the GUI spawns `flash_main_hub.sh` on macOS or `flash_main_hub.ps1` on Windows automatically, streams their logs live, and marks the status as **Success**/**Failed** when done.
@@ -43,7 +43,7 @@ Prerequisites:
 - Passwords must be 8–63 printable ASCII characters.
 - Each `(batch, serial)` pair must be unique.
 
-This repo ships with `passwords.csv` pre-populated for **batch 1** (`serial` 1‑100) using placeholder values `B1P0001Pass!` … `B1P0100Pass!`. Add new rows for additional batches before running the GUI; the server refuses to flash units whose batch/serial pair is missing.
+This repo ships with `passwords.csv` pre-populated for **batch 01** (`serial` 0001‑0100) using easy-to-type lowercase word pairs plus digits (e.g. `amber-river1853`). The numeric suffix does **not** match the serial number, so operators can’t infer other passwords. Add new rows for additional batches before running the GUI; follow the same hyphenated `word-wordNNNN` pattern so passwords remain human-friendly. You can regenerate the CSV via `python3 scripts/generate_passwords.py --batch 2 --count 100 --seed <seed> --output main-hub-production/bin/passwords.csv`.
 
 ## Distribution to Operators
 
