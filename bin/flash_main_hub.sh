@@ -150,7 +150,7 @@ collect_serial_candidates() {
     for dev in $pattern; do
       [[ -c "${dev}" ]] || continue
       skip=0
-      for existing in "${candidates[@]}"; do
+      for existing in "${candidates[@]:-}"; do
         if [[ "${existing}" == "${dev}" ]]; then
           skip=1
           break
@@ -162,12 +162,14 @@ collect_serial_candidates() {
     done
   done
   shopt -u nullglob
-  printf '%s\n' "${candidates[@]}"
+  if ((${#candidates[@]} > 0)); then
+    printf '%s\n' "${candidates[@]}"
+  fi
 }
 
 auto_select_serial_port() {
   local interactive="${1:-1}"
-  local candidates=()
+  local -a candidates=()
   while IFS= read -r dev; do
     candidates+=("${dev}")
   done < <(collect_serial_candidates)
@@ -194,7 +196,7 @@ auto_select_serial_port() {
 
   echo "Multiple USB serial devices detected:"
   local idx=1
-  for dev in "${candidates[@]}"; do
+  for dev in "${candidates[@]:-}"; do
     printf '  [%d] %s\n' "${idx}" "${dev}"
     idx=$((idx + 1))
   done

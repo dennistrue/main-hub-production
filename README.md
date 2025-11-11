@@ -2,9 +2,14 @@
 
 Release artifacts for Main Hub flashing.
 
-## GUI Front End
+## Operator Workflow (GUI)
 
-Run `flash_gui.py` for a minimal cross-platform interface (served in your browser) that wraps the platform-specific flashing scripts:
+End-users don’t need to open a terminal. From Finder/Explorer, double-click one of the launchers in the repository root:
+
+- **macOS:** `Run Flash GUI.command`
+- **Windows:** `RunFlashGUI.bat`
+
+Both launchers simply `cd bin` and run `flash_gui.py`, so everything the operator needs stays hidden inside the `bin/` directory. Advanced users can still run the Python script manually:
 
 ```
 python3 flash_gui.py
@@ -16,7 +21,12 @@ The script starts a tiny local web server, opens your default browser, and promp
 - SSID: `Main<batch><serial_in_batch padded to 4 digits>`
 - Password: looked up from the local password database
 
-Hit **Next** to advance to the next serial within the same batch (up to 100). When you click **Flash**, the GUI spawns `flash_main_hub.sh` on macOS or `flash_main_hub.ps1` on Windows, streams their logs live, and marks the status as **Success**/**Failed** when done.
+Hit **Next** to advance to the next serial within the same batch (up to 100). When you click **Flash**, the GUI spawns `flash_main_hub.sh` on macOS or `flash_main_hub.ps1` on Windows automatically, streams their logs live, and marks the status as **Success**/**Failed** when done.
+
+### One-click launchers
+
+- **macOS:** Double-click `Run Flash GUI.command` (or right-click → *Open* the first time). It just runs `python3 flash_gui.py` inside this folder and pops open the browser.
+- **Windows:** Double-click `RunFlashGUI.bat`. The batch file uses `MAIN_HUB_PYTHON`, `python3`, or `py` (in that order) to launch the GUI and keeps the window open if there’s an error.
 
 Prerequisites:
 
@@ -34,6 +44,16 @@ Prerequisites:
 - Each `(batch, serial)` pair must be unique.
 
 This repo ships with `passwords.csv` pre-populated for **batch 1** (`serial` 1‑100) using placeholder values `B1P0001Pass!` … `B1P0100Pass!`. Add new rows for additional batches before running the GUI; the server refuses to flash units whose batch/serial pair is missing.
+
+## Distribution to Operators
+
+For hands-off installs, publish a zip of this `main-hub-production` folder (or a GitHub release) and share the download link. Operators only need to:
+
+1. Download and extract the archive (all contents stay in one folder, so they only see the launch scripts and logs).
+2. Install Python 3 (plus PowerShell 7 on Windows if desired).
+3. Double-click the platform launcher (`Run Flash GUI.command` or `RunFlashGUI.bat`) and follow the on-screen batch/serial workflow.
+
+Because the flashing scripts, tools, and release artifacts all live in this folder—and the GUI already hides the rest—operators never need to open a terminal.
 
 ## Script Usage
 
