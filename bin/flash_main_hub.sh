@@ -118,6 +118,7 @@ FLASH_ENCRYPTION_KEY_FILE="${FLASH_ENCRYPTION_KEY_FILE:-${PRODUCTION_ROOT}/keys/
 FLASH_ENCRYPTION_ENABLED="${FLASH_ENCRYPTION_ENABLED:-1}"
 LOG_DIR="${PRODUCTION_ROOT}/logs"
 FACTORY_CFG_TOOL="${PRODUCTION_ROOT}/tools/gen_factory_payload.py"
+FLASH_ENV_VERSION="1.0.2"
 FACTORY_PARTITION_SIZE_HEX="${FACTORY_PARTITION_SIZE:-0x10000}"
 FACTORY_CFG_PLAIN_PATH=""
 FACTORY_CFG_FLASH_PATH=""
@@ -579,9 +580,12 @@ def emit_optional(key, value):
         print(f"{key}=")
     else:
         print(f"{key}={shlex.quote(str(value))}")
-emit('FACTORY_SSID', data.get('factory_ssid', 'Main0000'))
+emit('FACTORY_SSID', data.get('factory_ssid', 'CC00-00000000'))
 emit('FACTORY_PASSWORD', data.get('ap_password', '12345678'))
 emit('TARGET_IP', data.get('target_ip', '192.168.4.1'))
+emit('BUNDLE_VERSION', data.get('version'))
+emit('BUNDLE_ENVIRONMENT', data.get('environment'))
+emit('BUNDLE_COMMIT', data.get('git_commit'))
 emit('ART_BOOTLOADER', arts.get('bootloader'))
 emit('ART_BOOT_APP0', arts.get('boot_app0'))
 emit('ART_PARTITIONS', arts.get('partitions'))
@@ -777,6 +781,16 @@ flash_cmd+=(
   0x3F0000 "${FACTORY_CFG_FLASH_PATH}"
 )
 
+print_version_overview() {
+  echo "---- Build/Flash Versions ----"
+  echo "Flash environment : ${FLASH_ENV_VERSION}"
+  echo "Bundle version    : ${BUNDLE_VERSION:-unknown}"
+  echo "Bundle commit     : ${BUNDLE_COMMIT:-unknown}"
+  echo "Bundle environment: ${BUNDLE_ENVIRONMENT:-unknown}"
+  echo "Target serial     : ${SERIAL}"
+  echo "------------------------------"
+}
+
 ensure_serial_port_ready
 
 if ! verify_flash_plan; then
@@ -784,6 +798,7 @@ if ! verify_flash_plan; then
   exit 1
 fi
 
+print_version_overview
 echo "Flashing bundle $(basename "${RELEASES_DIR}") to ${PORT}..."
 "${flash_cmd[@]}"
 
@@ -849,7 +864,7 @@ provision_serial() {
     --data-urlencode "password=${AP_PASSWORD}" \
     "http://${TARGET_IP}/debug/update"
 
-  echo "SSID updated. Device will reboot as Main${SERIAL}."
+  echo "SSID updated. Device will reboot as ${SERIAL}."
   trap - RETURN
   restore_wifi_after_provision
 }

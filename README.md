@@ -1,6 +1,6 @@
-# Main Hub Production
+# Controller Production
 
-Release artifacts for Main Hub flashing.
+Release artifacts for Controller flashing.
 
 ## Operator Workflow (GUI)
 
@@ -17,8 +17,8 @@ python3 flash_gui.py
 
 The script starts a tiny local web server, opens your default browser, and prompts for a batch number plus the serial index (001‑100). It automatically derives:
 
-- Serial suffix: `<batch (two digits)><serial_in_batch padded to 4 digits>` (e.g. batch 1, serial 7 ⇒ `010007`)
-- SSID: `Main<batch (two digits)><serial_in_batch padded to 4 digits>` (e.g. `Main010007`)
+- Serial suffix: `CC<batch (two digits)>-<year (two digits)><month (two digits)><serial_in_batch padded to 4 digits>` (e.g. batch 1, Nov 2025, serial 7 ⇒ `CC01-25110007`)
+- SSID: identical to the serial (e.g. `CC01-25110007`)
 - Password: looked up from the local password database
 
 Hit **Next** to advance to the next serial within the same batch (up to 100). When you click **Flash**, the GUI spawns `flash_main_hub.sh` on macOS or `flash_main_hub.ps1` on Windows automatically, streams their logs live, and marks the status as **Success**/**Failed** when done.

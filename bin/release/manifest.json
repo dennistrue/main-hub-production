@@ -1,9 +1,9 @@
 {
-  "version": "v1.2",
-  "git_commit": "0d17935",
+  "version": "v1.2.2",
+  "git_commit": "c9bac41",
   "environment": "esp32dev",
-  "built_at": "20251112T142007Z",
-  "factory_ssid": "Main0000",
+  "built_at": "20251119T130226Z",
+  "factory_ssid": "CC00-00000000",
   "ap_password": "12345678",
   "target_ip": "192.168.4.1",
   "flash_encryption": "enabled",
