@@ -70,6 +70,24 @@ function Ensure-PythonModule {
     }
 }
 
+function Resolve-EspSecureModule([string]$PythonExe) {
+    $candidates = @(
+        @{ Module = "esptool.espsecure"; Package = "esptool" },
+        @{ Module = "espsecure"; Package = "esptool" }
+    )
+
+    foreach ($candidate in $candidates) {
+        try {
+            Ensure-PythonModule -PythonExe $PythonExe -ModuleName $candidate.Module -PackageName $candidate.Package
+            return $candidate.Module
+        } catch {
+            continue
+        }
+    }
+
+    throw "Unable to load an espsecure module from esptool. Install a supported esptool release and rerun."
+}
+
 function Resolve-Python {
     $candidates = @(
         $env:MAIN_HUB_PYTHON,
@@ -140,7 +158,7 @@ $Firmware   = Join-Path $ReleaseDir $Artifacts.firmware
 $Spiffs     = Join-Path $ReleaseDir $Artifacts.spiffs
 $FactoryTemplate = Join-Path $ReleaseDir $Artifacts.factory_cfg
 
-[$Bootloader, $BootApp0, $Partitions, $Firmware, $Spiffs, $FactoryTemplate] | ForEach-Object {
+@($Bootloader, $BootApp0, $Partitions, $Firmware, $Spiffs, $FactoryTemplate) | ForEach-Object {
     Require-File $_
 }
 
@@ -151,7 +169,7 @@ if (-not (Test-Path $EsptoolPath)) {
 }
 
 $PythonExe = Resolve-Python
-Ensure-PythonModule -PythonExe $PythonExe -ModuleName "esptool.espsecure" -PackageName "esptool"
+$EspSecureModule = Resolve-EspSecureModule -PythonExe $PythonExe
 
 $FactoryPlainPath = New-TempFilePath "factorycfg_plain_"
 $factoryArgs = @(
@@ -171,7 +189,7 @@ if ($EncryptionEnabled) {
     Require-File $FlashEncryptionKeyFile
     $FactoryFlashPath = New-TempFilePath "factorycfg_enc_"
     $espsecureArgs = @(
-        "-m", "esptool.espsecure",
+        "-m", $EspSecureModule,
         "encrypt_flash_data",
         "--keyfile", $FlashEncryptionKeyFile,
         "--address", "0x3F0000",
@@ -181,7 +199,7 @@ if ($EncryptionEnabled) {
     try {
         & $PythonExe @espsecureArgs
     } catch {
-        throw "Failed to encrypt factory payload. Ensure 'esptool' is installed (pip install esptool) so esptool.espsecure is available. Inner error: $_"
+        throw "Failed to encrypt factory payload. Ensure 'esptool' is installed (pip install esptool) so $EspSecureModule is available. Inner error: $_"
     }
 }
 
