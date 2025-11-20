@@ -48,10 +48,12 @@ if "%PYTHON_BIN%"=="" set "PYTHON_BIN=python3"
 
 where "%PYTHON_BIN%" >nul 2>nul
 if errorlevel 1 (
+    echo python3 not found on PATH. Attempting to install via winget...
+    winget install --id Python.Python.3 -e --source winget
     set "PYTHON_BIN=py"
     where "%PYTHON_BIN%" >nul 2>nul
     if errorlevel 1 (
-        echo python3 or py was not found. Install Python 3 and try again.
+        echo Python is still not available. Install Python 3 and rerun.
         pause
         exit /b 1
     )
