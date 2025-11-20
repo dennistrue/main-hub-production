@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 set "REPO_DIR=%SCRIPT_DIR%"
 rem Trim trailing backslash to avoid escaping the closing quote in git -C
@@ -11,10 +11,15 @@ set "LOGFILE=%LOG_DIR%\flash_gui_launcher.log"
 
 echo ==== %date% %time% ==== >> "%LOGFILE%"
 
-setlocal enabledelayedexpansion
 :log
-echo %~1
-echo %~1 >> "%LOGFILE%"
+set "MSG=%~1"
+if "%MSG%"=="" (
+    echo.
+    echo.>>"%LOGFILE%"
+) else (
+    echo %MSG%
+    echo %MSG%>>"%LOGFILE%"
+)
 goto :eof
 
 call :log "PATH: %PATH%"
@@ -61,43 +66,50 @@ echo PATH is: %PATH%
 set "PYTHON_BIN=%MAIN_HUB_PYTHON%"
 if "%PYTHON_BIN%"=="" set "PYTHON_BIN=python3"
 
-call :log "Detecting Python (initial): %PYTHON_BIN%"
-where "%PYTHON_BIN%" >nul 2>nul
+call :log "Detecting Python (initial): !PYTHON_BIN!"
+where "!PYTHON_BIN!" >nul 2>nul
 if errorlevel 1 (
-    call :log "%PYTHON_BIN% not found. Trying \"py\"..."
+    call :log "!PYTHON_BIN! not found. Trying \"py\"..."
     set "PYTHON_BIN=py"
-    where "%PYTHON_BIN%" >nul 2>nul
+    where "!PYTHON_BIN!" >nul 2>nul
 )
 
 if errorlevel 1 (
+    where winget >nul 2>nul
+    if errorlevel 1 (
+        call :log "Python not found and winget is unavailable. Install Python 3 manually. Log: %LOGFILE%"
+        pause
+        exit /b 1
+    )
     call :log "Python not found. Attempting winget install of Python 3..."
     winget install --id Python.Python.3 -e --source winget >> "%LOGFILE%" 2>&1
-    call :log "winget exited with code %errorlevel%"
+    call :log "winget exited with code !errorlevel!"
     call :log "Re-checking for Python after install..."
     set "PYTHON_BIN=python3"
-    where "%PYTHON_BIN%" >nul 2>nul
+    where "!PYTHON_BIN!" >nul 2>nul
     if errorlevel 1 (
         set "PYTHON_BIN=py"
-        where "%PYTHON_BIN%" >nul 2>nul
+        where "!PYTHON_BIN!" >nul 2>nul
     )
 )
 
-where "%PYTHON_BIN%" >nul 2>nul
+where "!PYTHON_BIN!" >nul 2>nul
 if errorlevel 1 (
     call :log "Python is still not available. Install Python 3 (try \"winget install Python.Python.3\") and rerun. Log: %LOGFILE%"
     pause
     exit /b 1
 )
 
-call :log "Using Python interpreter: %PYTHON_BIN%"
+call :log "Using Python interpreter: !PYTHON_BIN!"
 call :log "Starting GUI in 3 seconds... (Ctrl+C to cancel)"
 timeout /t 3 >nul
 
-"%PYTHON_BIN%" "%BIN_DIR%\flash_gui.py" >> "%LOGFILE%" 2>&1
-if errorlevel 1 (
+"!PYTHON_BIN!" "%BIN_DIR%\flash_gui.py" >> "%LOGFILE%" 2>&1
+if !errorlevel! neq 0 (
     call :log "Flash GUI exited with an error."
     pause
 ) else (
     call :log "Flash GUI completed."
     pause
 )
+endlocal
