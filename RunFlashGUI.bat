@@ -83,4 +83,7 @@ timeout /t 3 >nul
 if errorlevel 1 (
     echo Flash GUI exited with an error.
     pause
+) else (
+    echo Flash GUI completed.
+    pause
 )
