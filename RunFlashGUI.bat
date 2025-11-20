@@ -2,6 +2,8 @@
 setlocal
 set "SCRIPT_DIR=%~dp0"
 set "REPO_DIR=%SCRIPT_DIR%"
+rem Trim trailing backslash to avoid escaping the closing quote in git -C
+if "%REPO_DIR:~-1%"=="\" set "REPO_DIR=%REPO_DIR:~0,-1%"
 set "BIN_DIR=%SCRIPT_DIR%bin"
 
 :: Ensure Git is available
