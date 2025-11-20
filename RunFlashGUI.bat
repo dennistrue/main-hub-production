@@ -75,6 +75,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo Using Python interpreter: %PYTHON_BIN%
+echo Starting GUI in 3 seconds... (Ctrl+C to cancel)
+timeout /t 3 >nul
+
 "%PYTHON_BIN%" "%BIN_DIR%\flash_gui.py"
 if errorlevel 1 (
     echo Flash GUI exited with an error.
