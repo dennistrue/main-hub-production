@@ -112,8 +112,7 @@ RELEASES_DIR="${PRODUCTION_ROOT}/release"
 TOOLS_DIR="${PRODUCTION_ROOT}/tools/esptool"
 ESPTOOL=""
 ESPEFUSE=""
-ESPSECURE_PYTHON=""
-ESPSECURE_TOOL=""
+ESPSECURE=""
 FLASH_ENCRYPTION_KEY_FILE="${FLASH_ENCRYPTION_KEY_FILE:-${PRODUCTION_ROOT}/keys/flash_encryption_key.bin}"
 FLASH_ENCRYPTION_ENABLED="${FLASH_ENCRYPTION_ENABLED:-1}"
 LOG_DIR="${PRODUCTION_ROOT}/logs"
@@ -398,11 +397,10 @@ prepare_factory_payload() {
   verify_factory_payload_plain "${FACTORY_CFG_PLAIN_PATH}"
 
   if [[ "${FLASH_ENCRYPTION_ENABLED}" == "1" ]]; then
-    ensure_espsecure
     local encrypted
     encrypted="$(mktemp)"
     TEMP_FILES+=("${encrypted}")
-    "${ESPSECURE_PYTHON}" "${ESPSECURE_TOOL}" encrypt_flash_data \
+    "${ESPSECURE}" encrypt_flash_data \
       --keyfile "${FLASH_ENCRYPTION_KEY_FILE}" \
       --address 0x3F0000 \
       --output "${encrypted}" \
@@ -460,9 +458,11 @@ select_tool_binaries() {
   if [[ "${arch}" == "arm64" || "${arch}" == "aarch64" ]]; then
     ESPTOOL="${TOOLS_DIR}/macos-arm64/esptool"
     ESPEFUSE="${TOOLS_DIR}/macos-arm64/espefuse"
+    ESPSECURE="${TOOLS_DIR}/macos-arm64/espsecure"
   else
     ESPTOOL="${TOOLS_DIR}/macos-amd64/esptool"
     ESPEFUSE="${TOOLS_DIR}/macos-amd64/espefuse"
+    ESPSECURE="${TOOLS_DIR}/macos-amd64/espsecure"
   fi
 
   if [[ ! -x "${ESPTOOL}" ]]; then
@@ -473,69 +473,8 @@ select_tool_binaries() {
     echo "Error: espefuse binary not found at ${ESPEFUSE}. Run build_output.sh to refresh tools." >&2
     exit 1
   fi
-}
-
-detect_espsecure_python() {
-  if [[ -n "${ESPSECURE_PYTHON}" && -x "${ESPSECURE_PYTHON}" ]]; then
-    return 0
-  fi
-
-  local candidates=()
-  if [[ -n "${PLATFORMIO_CORE_DIR:-}" ]]; then
-    candidates+=("${PLATFORMIO_CORE_DIR}/penv/bin/python")
-  fi
-  candidates+=("${HOME}/.platformio/penv/bin/python")
-  candidates+=("python3")
-
-  local candidate
-  for candidate in "${candidates[@]}"; do
-    if [[ -x "${candidate}" ]]; then
-      ESPSECURE_PYTHON="${candidate}"
-      return 0
-    fi
-    if command -v "${candidate}" >/dev/null 2>&1; then
-      ESPSECURE_PYTHON="$(command -v "${candidate}")"
-      return 0
-    fi
-  done
-  return 1
-}
-
-detect_espsecure_tool() {
-  if [[ -n "${ESPSECURE_TOOL}" && -f "${ESPSECURE_TOOL}" ]]; then
-    return 0
-  fi
-
-  local bases=()
-  if [[ -n "${PLATFORMIO_CORE_DIR:-}" ]]; then
-    bases+=("${PLATFORMIO_CORE_DIR}")
-  fi
-  bases+=("${HOME}/.platformio")
-
-  local base
-  for base in "${bases[@]}"; do
-    local candidate="${base}/packages/tool-esptoolpy/espsecure.py"
-    if [[ -f "${candidate}" ]]; then
-      ESPSECURE_TOOL="${candidate}"
-      return 0
-    fi
-  done
-
-  if command -v espsecure.py >/dev/null 2>&1; then
-    ESPSECURE_TOOL="$(command -v espsecure.py)"
-    return 0
-  fi
-
-  return 1
-}
-
-ensure_espsecure() {
-  if ! detect_espsecure_python; then
-    echo "Error: unable to locate python interpreter for espsecure.py." >&2
-    exit 1
-  fi
-  if ! detect_espsecure_tool; then
-    echo "Error: unable to locate espsecure.py tool." >&2
+  if [[ ! -x "${ESPSECURE}" ]]; then
+    echo "Error: espsecure binary not found at ${ESPSECURE}. Run build_output.sh to refresh tools." >&2
     exit 1
   fi
 }
@@ -545,16 +484,6 @@ select_tool_binaries
 if [[ ! -f "${FLASH_ENCRYPTION_KEY_FILE}" ]]; then
   echo "Error: flash encryption key not found at ${FLASH_ENCRYPTION_KEY_FILE}." >&2
   echo "Place the key (flash_encryption_key.bin) under main-hub-production/keys/ or set FLASH_ENCRYPTION_KEY_FILE." >&2
-  exit 1
-fi
-
-echo "Updating production repo..."
-if ! git -C "${PRODUCTION_ROOT}" fetch --quiet --tags; then
-  echo "Error: unable to fetch updates. Verify network connectivity and Git credentials." >&2
-  exit 1
-fi
-if ! git -C "${PRODUCTION_ROOT}" pull --ff-only; then
-  echo "Error: git pull failed. Resolve merge/credential issues before flashing." >&2
   exit 1
 fi
 
@@ -667,22 +596,43 @@ choose_or_fail() {
   printf '%s' "${chosen}"
 }
 
-
-BOOTLOADER_BIN="$(choose_or_fail "${ENC_BOOTLOADER_BIN}" "${BOOTLOADER_BIN}" "bootloader")"
-BOOT_APP0_BIN="$(choose_or_fail "${ENC_BOOT_APP0_BIN}" "${BOOT_APP0_BIN}" "boot_app0")"
-PARTITIONS_BIN="$(choose_or_fail "${ENC_PARTITIONS_BIN}" "${PARTITIONS_BIN}" "partitions")"
-FIRMWARE_BIN="$(choose_or_fail "${ENC_FIRMWARE_BIN}" "${FIRMWARE_BIN}" "firmware")"
-SPIFFS_BIN="$(choose_or_fail "${ENC_SPIFFS_BIN}" "${SPIFFS_BIN}" "spiffs")"
-FACTORY_CFG_TEMPLATE_BIN="$(choose_or_fail "${ENC_FACTORY_CFG_BIN}" "${FACTORY_CFG_TEMPLATE_BIN}" "factory_cfg")"
+require_encrypted_artifact() {
+  local label="$1"
+  local path="$2"
+  if [[ -z "${path}" ]]; then
+    echo "Error: encrypted artifact for ${label} missing from manifest." >&2
+    exit 1
+  fi
+  if [[ ! -f "${path}" ]]; then
+    echo "Error: encrypted artifact for ${label} not found at ${path}." >&2
+    exit 1
+  fi
+}
 
 if [[ "${FLASH_ENCRYPTION_ENABLED}" == "1" ]]; then
-  USE_PRE_ENCRYPTED=1
-else
-  USE_PRE_ENCRYPTED=0
-fi
+  require_encrypted_artifact "bootloader" "${ENC_BOOTLOADER_BIN}"
+  require_encrypted_artifact "boot_app0" "${ENC_BOOT_APP0_BIN}"
+  require_encrypted_artifact "partitions" "${ENC_PARTITIONS_BIN}"
+  require_encrypted_artifact "firmware" "${ENC_FIRMWARE_BIN}"
+  require_encrypted_artifact "spiffs" "${ENC_SPIFFS_BIN}"
+  require_encrypted_artifact "factory_cfg" "${ENC_FACTORY_CFG_BIN}"
 
-if (( USE_PRE_ENCRYPTED )); then
-  echo "Using pre-encrypted release bundle for flashing."
+  BOOTLOADER_BIN="${ENC_BOOTLOADER_BIN}"
+  BOOT_APP0_BIN="${ENC_BOOT_APP0_BIN}"
+  PARTITIONS_BIN="${ENC_PARTITIONS_BIN}"
+  FIRMWARE_BIN="${ENC_FIRMWARE_BIN}"
+  SPIFFS_BIN="${ENC_SPIFFS_BIN}"
+  FACTORY_CFG_TEMPLATE_BIN="${ENC_FACTORY_CFG_BIN}"
+  USE_PRE_ENCRYPTED=1
+  echo "Using pre-encrypted release bundle for flashing (encryption enabled)."
+else
+  BOOTLOADER_BIN="$(choose_or_fail "${ENC_BOOTLOADER_BIN}" "${BOOTLOADER_BIN}" "bootloader")"
+  BOOT_APP0_BIN="$(choose_or_fail "${ENC_BOOT_APP0_BIN}" "${BOOT_APP0_BIN}" "boot_app0")"
+  PARTITIONS_BIN="$(choose_or_fail "${ENC_PARTITIONS_BIN}" "${PARTITIONS_BIN}" "partitions")"
+  FIRMWARE_BIN="$(choose_or_fail "${ENC_FIRMWARE_BIN}" "${FIRMWARE_BIN}" "firmware")"
+  SPIFFS_BIN="$(choose_or_fail "${ENC_SPIFFS_BIN}" "${SPIFFS_BIN}" "spiffs")"
+  FACTORY_CFG_TEMPLATE_BIN="$(choose_or_fail "${ENC_FACTORY_CFG_BIN}" "${FACTORY_CFG_TEMPLATE_BIN}" "factory_cfg")"
+  USE_PRE_ENCRYPTED=0
 fi
 
 needs_flash_encryption_setup() {
