@@ -43,20 +43,36 @@ if not "%HEAD_BEFORE%"=="" if not "%HEAD_AFTER%"=="" if not "%HEAD_AFTER%"=="%HE
 
 cd /d "%BIN_DIR%"
 
+echo Detecting Python...
+echo PATH is: %PATH%
 set "PYTHON_BIN=%MAIN_HUB_PYTHON%"
 if "%PYTHON_BIN%"=="" set "PYTHON_BIN=python3"
 
 where "%PYTHON_BIN%" >nul 2>nul
 if errorlevel 1 (
-    echo python3 not found on PATH. Attempting to install via winget...
-    winget install --id Python.Python.3 -e --source winget
+    echo "%PYTHON_BIN%" not found. Trying \"py\"...
     set "PYTHON_BIN=py"
     where "%PYTHON_BIN%" >nul 2>nul
+)
+
+if errorlevel 1 (
+    echo Python not found. Attempting winget install of Python 3...
+    winget install --id Python.Python.3 -e --source winget
+    echo winget exited with code %errorlevel%
+    echo Re-checking for Python after install...
+    set "PYTHON_BIN=python3"
+    where "%PYTHON_BIN%" >nul 2>nul
     if errorlevel 1 (
-        echo Python is still not available. Install Python 3 and rerun.
-        pause
-        exit /b 1
+        set "PYTHON_BIN=py"
+        where "%PYTHON_BIN%" >nul 2>nul
     )
+)
+
+where "%PYTHON_BIN%" >nul 2>nul
+if errorlevel 1 (
+    echo Python is still not available. Install Python 3 (try \"winget install Python.Python.3\") and rerun.
+    pause
+    exit /b 1
 )
 
 "%PYTHON_BIN%" "%BIN_DIR%\flash_gui.py"
