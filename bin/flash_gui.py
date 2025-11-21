@@ -79,8 +79,27 @@ def detect_serial_ports() -> list[str]:
         try:
             import serial.tools.list_ports  # type: ignore
         except Exception:
-            for index in range(1, 33):
-                add_port(f"COM{index}")
+            # Fallback: query real ports via PowerShell to avoid showing COM1-32 when pyserial is missing.
+            try:
+                result = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoLogo",
+                        "-NoProfile",
+                        "[System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object"
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
+                )
+            except Exception:
+                # Last resort: show a minimal guess instead of spamming COM1-32 blindly.
+                add_port("COM3")
+                add_port("COM4")
+            else:
+                for line in result.stdout.splitlines():
+                    add_port(line.strip())
         else:
             for info in serial.tools.list_ports.comports():  # type: ignore[attr-defined]
                 add_port(info.device)
