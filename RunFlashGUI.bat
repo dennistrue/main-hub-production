@@ -112,7 +112,11 @@ if errorlevel 1 (
 
 call :log "Using Python interpreter: %PYTHON_BIN%"
 call :log "Starting GUI in 3 seconds... (Ctrl+C to cancel)"
-timeout /t 3 >nul
+timeout /t 3 >nul 2>nul
+if errorlevel 1 (
+    rem timeout fails when stdin is redirected; fall back to ping-based delay
+    ping -n 4 127.0.0.1 >nul
+)
 
 "%PYTHON_BIN%" "%BIN_DIR%\flash_gui.py" >> "%LOGFILE%" 2>&1
 if errorlevel 1 (

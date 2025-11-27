@@ -1,0 +1,11 @@
+==== 27/11/2025  8:35:11.20 ==== 
+PATH: C:\Users\detru\AppData\Local\Temp\.tmpPC63S6;c:\Users\detru\.vscode-server\cli\servers\Stable-1e3c50d64110be466c0b4a45222e81d2c9352888\server\bin\remote-cli;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\dotnet\;C:\Program Files\Git\cmd;C:\Program Files\Tailscale\;C:\Users\detru\AppData\Local\Programs\Python\Python313\Scripts\;C:\Users\detru\AppData\Local\Programs\Python\Python313\;C:\Users\detru\AppData\Local\Programs\Python\Launcher\;C:\Users\detru\AppData\Local\Microsoft\WindowsApps;C:\Users\detru\AppData\Local\Programs\Microsoft VS Code\bin;c:\Users\detru\.vscode-server\extensions\openai.chatgpt-0.4.46-win32-x64\bin\windows-x86_64 
+Checking for updates... 
+Updating 784a8f2..2d61c3c
+Fast-forward
+ bin/logs/flash_log.csv                 |   5 +++++
+ bin/release/encrypted/firmware.enc.bin | Bin 1050704 -> 1052048 bytes
+ bin/release/encrypted/spiffs.enc.bin   | Bin 1441792 -> 1441792 bytes
+ bin/release/manifest.json              |   6 +++---
+ 4 files changed, 8 insertions(+), 3 deletions(-)
+Repository updated; restarting launcher to pick up changes... 
