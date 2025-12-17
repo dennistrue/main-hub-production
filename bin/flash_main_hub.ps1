@@ -1,9 +1,7 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Serial,
+    [string]$Serial = "",
 
-    [Parameter(Mandatory = $true)]
-    [string]$Password,
+    [string]$Password = "",
 
     [string]$Port = $env:MAIN_HUB_SERIAL_PORT,
 
@@ -11,13 +9,15 @@ param(
 
     [switch]$WifiProvision,
 
-    [switch]$SkipSSID
+    [switch]$SkipSSID,
+
+    [switch]$PreserveIdentity
 )
 
 $ErrorActionPreference = "Stop"
 
 function Show-Usage {
-    Write-Host "Usage: .\flash_main_hub.ps1 -Serial <serial> -Password <softap-password> [-Port COMx|auto] [-WifiProvision]" -ForegroundColor Yellow
+    Write-Host "Usage: .\flash_main_hub.ps1 [-Serial <serial> -Password <softap-password>] [-Port COMx|auto] [-WifiProvision] [-PreserveIdentity]" -ForegroundColor Yellow
 }
 
 function Require-File([string]$Path) {
@@ -167,13 +167,21 @@ function Assert-PortAvailable([string]$PortPath) {
     }
 }
 
-Validate-Serial $Serial
-Validate-Password $Password
-$SanitizedSerial = Sanitize-Serial $Serial
-if ($SanitizedSerial -ne $Serial) {
-    Write-Host "Serial sanitized to '$SanitizedSerial' for factory config." -ForegroundColor Yellow
+$Preserve = $PreserveIdentity.IsPresent
+if ($Preserve) {
+    if (-not $Serial) { $Serial = "preserve" }
+    if (-not $Password) { $Password = "preserve" }
+} else {
+    if (-not $Serial) { throw "Serial is required unless -PreserveIdentity is set." }
+    if (-not $Password) { throw "Password is required unless -PreserveIdentity is set." }
+    Validate-Serial $Serial
+    Validate-Password $Password
+    $SanitizedSerial = Sanitize-Serial $Serial
+    if ($SanitizedSerial -ne $Serial) {
+        Write-Host "Serial sanitized to '$SanitizedSerial' for factory config." -ForegroundColor Yellow
+    }
+    $Serial = $SanitizedSerial
 }
-$Serial = $SanitizedSerial
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ReleaseDir = Join-Path $ScriptDir "release"
@@ -200,6 +208,12 @@ if ($DeprecatedSkip) {
     Write-Warning "SkipSSID is deprecated; Wi-Fi provisioning is off by default. Use -WifiProvision to enable."
 }
 $DoWifiProvision = $WifiProvision.IsPresent
+if ($Preserve) {
+    if ($DoWifiProvision) {
+        Write-Warning "Preserve identity enabled; skipping Wi-Fi provisioning."
+    }
+    $DoWifiProvision = $false
+}
 
 $ManifestPath = Join-Path $ReleaseDir "manifest.json"
 Require-File $ManifestPath
@@ -318,26 +332,34 @@ $EspsecurePath = $Tools.Espsecure
 
 $PythonExe = Resolve-Python
 
-$FactoryPlainPath = New-TempFilePath "factorycfg_plain_"
-$factoryArgs = @(
-    $FactoryTool,
-    "--serial", $Serial,
-    "--password", $Password,
-    "--output", $FactoryPlainPath
-)
-& $PythonExe @factoryArgs
-
-$FactoryFlashPath = $FactoryPlainPath
-if ($EncryptionEnabled) {
-    $FactoryFlashPath = New-TempFilePath "factorycfg_enc_"
-    $espsecureArgs = @(
-        "encrypt_flash_data",
-        "--keyfile", $FlashEncryptionKeyFile,
-        "--address", "0x3F0000",
-        "--output", $FactoryFlashPath,
-        $FactoryPlainPath
+$IncludeFactoryCfg = -not $Preserve
+$FactoryPlainPath = $null
+$FactoryFlashPath = $null
+if (-not $IncludeFactoryCfg) {
+    Write-Host "Preserve identity enabled; skipping factory config partition write." -ForegroundColor Yellow
+}
+if ($IncludeFactoryCfg) {
+    $FactoryPlainPath = New-TempFilePath "factorycfg_plain_"
+    $factoryArgs = @(
+        $FactoryTool,
+        "--serial", $Serial,
+        "--password", $Password,
+        "--output", $FactoryPlainPath
     )
-    & $EspsecurePath @espsecureArgs
+    & $PythonExe @factoryArgs
+
+    $FactoryFlashPath = $FactoryPlainPath
+    if ($EncryptionEnabled) {
+        $FactoryFlashPath = New-TempFilePath "factorycfg_enc_"
+        $espsecureArgs = @(
+            "encrypt_flash_data",
+            "--keyfile", $FlashEncryptionKeyFile,
+            "--address", "0x3F0000",
+            "--output", $FactoryFlashPath,
+            $FactoryPlainPath
+        )
+        & $EspsecurePath @espsecureArgs
+    }
 }
 
 $CompressionArg = if ($UsePreEncrypted -or $EncryptionEnabled) { "--no-compress" } else { "-z" }
@@ -416,14 +438,17 @@ function Verify-FlashPlan {
     if (-not $ok) { throw "Flash plan validation failed." }
 }
 
-Verify-FlashPlan -Regions @(
+$regions = @(
     @{ Name = "bootloader";  Path = $Bootloader;       Limit = 0x7000 },
     @{ Name = "partitions";  Path = $Partitions;       Limit = 0x1000 },
     @{ Name = "boot_app0";   Path = $BootApp0;         Limit = 0x2000 },
     @{ Name = "firmware";    Path = $Firmware;         Limit = 0x140000 },
-    @{ Name = "spiffs";      Path = $Spiffs;           Limit = 0x160000 },
-    @{ Name = "factory_cfg"; Path = $FactoryFlashPath; Limit = 0x10000 }
+    @{ Name = "spiffs";      Path = $Spiffs;           Limit = 0x160000 }
 )
+if ($IncludeFactoryCfg) {
+    $regions += @{ Name = "factory_cfg"; Path = $FactoryFlashPath; Limit = 0x10000 }
+}
+Verify-FlashPlan -Regions $regions
 
 $flashArgs = @(
     "--chip", "esp32",
@@ -440,9 +465,11 @@ $flashArgs = @(
     "0x8000", $Partitions,
     "0xE000", $BootApp0,
     "0x10000", $Firmware,
-    "0x290000", $Spiffs,
-    "0x3F0000", $FactoryFlashPath
+    "0x290000", $Spiffs
 )
+if ($IncludeFactoryCfg) {
+    $flashArgs += @("0x3F0000", $FactoryFlashPath)
+}
 
 Write-Host "Flashing $($Manifest.version) to $Port" -ForegroundColor Cyan
 
@@ -452,7 +479,7 @@ try {
     Write-Host "Flash complete." -ForegroundColor Green
     $flashStatus = "wired_only"
 } finally {
-    if (Test-Path $FactoryPlainPath) {
+    if ($FactoryPlainPath -and (Test-Path $FactoryPlainPath)) {
         Remove-Item $FactoryPlainPath -ErrorAction SilentlyContinue
     }
     if ($FactoryFlashPath -and (Test-Path $FactoryFlashPath) -and $FactoryFlashPath -ne $FactoryPlainPath) {

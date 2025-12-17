@@ -195,6 +195,8 @@ INDEX_HTML = """<!DOCTYPE html>
     .message { color: #b91c1c; min-height: 1.2rem; }
     .actions { display: flex; gap: 12px; flex-wrap: wrap; }
     .actions button { flex: none; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .checkbox-row input { width: auto; }
   </style>
 </head>
 <body>
@@ -240,6 +242,14 @@ INDEX_HTML = """<!DOCTYPE html>
     </div>
     <div class="row">
       <div>
+        <label class="checkbox-row">
+          <input id="preserveIdentity" name="preserveIdentity" type="checkbox">
+          Preserve existing SSID/serial/password (skip factory provisioning)
+        </label>
+      </div>
+    </div>
+    <div class="row">
+      <div>
         <label for="serialPort">Serial port</label>
         <select id="serialPort" name="serialPort">
           <option value="auto">Auto-detect</option>
@@ -275,6 +285,7 @@ INDEX_HTML = """<!DOCTYPE html>
     const serialSuffixInput = document.getElementById('serialSuffix');
     const ssidInput = document.getElementById('ssid');
     const passwordInput = document.getElementById('password');
+    const preserveIdentityInput = document.getElementById('preserveIdentity');
     const portSelect = document.getElementById('serialPort');
     const refreshPortsButton = document.getElementById('refresh-ports');
     const form = document.getElementById('flash-form');
@@ -303,6 +314,9 @@ INDEX_HTML = """<!DOCTYPE html>
     }
 
     function markDerivedDirty() {
+      if (preserveIdentityInput.checked) {
+        return;
+      }
       derivedReady = false;
       flashButton.disabled = true;
     }
@@ -368,6 +382,15 @@ INDEX_HTML = """<!DOCTYPE html>
     }
 
     async function lookupDerived() {
+      if (preserveIdentityInput.checked) {
+        derivedReady = true;
+        messageEl.textContent = '';
+        serialSuffixInput.value = '';
+        ssidInput.value = '';
+        passwordInput.value = '';
+        flashButton.disabled = false;
+        return;
+      }
       const batch = batchInput.value.trim();
       const year = yearInput.value.trim();
       const month = monthInput.value.trim();
@@ -431,7 +454,30 @@ INDEX_HTML = """<!DOCTYPE html>
       }
     }
 
+    function applyPreserveIdentityState() {
+      const preserve = preserveIdentityInput.checked;
+      batchInput.disabled = preserve;
+      yearInput.disabled = preserve;
+      monthInput.disabled = preserve;
+      serialInput.disabled = preserve;
+      nextButton.disabled = preserve;
+      if (preserve) {
+        derivedReady = true;
+        messageEl.textContent = 'Preserving existing identity; serial/password not required.';
+        serialSuffixInput.value = '';
+        ssidInput.value = '';
+        passwordInput.value = '';
+        flashButton.disabled = false;
+      } else {
+        messageEl.textContent = '';
+        lookupDerived();
+      }
+    }
+
     function handleNext() {
+      if (preserveIdentityInput.checked) {
+        return;
+      }
       const current = parseInt(serialInput.value, 10) || SERIAL_MIN;
       if (current >= SERIAL_MAX) {
         messageEl.textContent = `Reached serial ${SERIAL_MAX}. Increase the batch number to continue.`;
@@ -443,18 +489,22 @@ INDEX_HTML = """<!DOCTYPE html>
 
     async function startFlash(event) {
       event.preventDefault();
-      if (!derivedReady) {
+      const preserveIdentity = preserveIdentityInput.checked;
+      if (!derivedReady && !preserveIdentity) {
         messageEl.textContent = 'Lookup failed; cannot start flash.';
         return;
       }
       messageEl.textContent = '';
       flashButton.disabled = true;
       const params = new URLSearchParams();
-      params.set('batch', batchInput.value.trim());
-      params.set('year', yearInput.value.trim());
-      params.set('month', monthInput.value.trim());
-      params.set('serial', serialInput.value.trim());
+      if (!preserveIdentity) {
+        params.set('batch', batchInput.value.trim());
+        params.set('year', yearInput.value.trim());
+        params.set('month', monthInput.value.trim());
+        params.set('serial', serialInput.value.trim());
+      }
       params.set('port', portSelect.value || 'auto');
+      params.set('preserve_identity', preserveIdentity ? '1' : '0');
       try {
         const response = await fetch('/flash', {
           method: 'POST',
@@ -483,12 +533,13 @@ INDEX_HTML = """<!DOCTYPE html>
     monthInput.addEventListener('input', markDerivedDirty);
     nextButton.addEventListener('click', handleNext);
     refreshPortsButton.addEventListener('click', () => loadPorts({ showBusy: true }));
+    preserveIdentityInput.addEventListener('change', applyPreserveIdentityState);
     setDefaultYearMonth();
     updateStatus({ code: 'ready', message: 'Ready to flash' });
     populatePorts([{ path: 'auto', label: 'Auto-detect' }]);
     loadPorts();
     setInterval(refreshState, 1000);
-    lookupDerived();
+    applyPreserveIdentityState();
     refreshState();
   </script>
 </body>
@@ -500,7 +551,9 @@ def load_password_db() -> None:
     PASSWORD_DB.load()
 
 
-def build_flash_command(serial: str, password: str, port: str | None) -> tuple[list[str], Path]:
+def build_flash_command(
+    serial: str, password: str, port: str | None, preserve_identity: bool = False
+) -> tuple[list[str], Path]:
     system = platform.system()
     port_arg = (port or "").strip()
     use_port = port_arg and port_arg.lower() != "auto"
@@ -508,7 +561,11 @@ def build_flash_command(serial: str, password: str, port: str | None) -> tuple[l
         script = PRODUCTION_DIR / "flash_main_hub.sh"
         if not script.exists():
             raise FileNotFoundError(f"macOS script not found: {script}")
-        command = ["/bin/bash", str(script), "--serial", serial, "--password", password]
+        command = ["/bin/bash", str(script)]
+        if preserve_identity:
+            command.append("--preserve-identity")
+        else:
+            command.extend(["--serial", serial, "--password", password])
         if use_port:
             command.extend(["--port", port_arg])
         return command, PRODUCTION_DIR
@@ -525,11 +582,11 @@ def build_flash_command(serial: str, password: str, port: str | None) -> tuple[l
             "Bypass",
             "-File",
             str(script),
-            "-Serial",
-            serial,
-            "-Password",
-            password,
         ]
+        if preserve_identity:
+            command.append("-PreserveIdentity")
+        else:
+            command.extend(["-Serial", serial, "-Password", password])
         if use_port:
             command.extend(["-Port", port_arg])
         return command, PRODUCTION_DIR
@@ -553,14 +610,37 @@ class FlashManager:
         self._logs: list[str] = []
         self._max_lines = 600
 
-    def start(self, batch: int, year: int, month: int, serial: int, port: str | None) -> tuple[bool, str]:
-        try:
-            unit = PASSWORD_DB.lookup(batch, serial, year, month)
-        except ValueError as exc:
-            return False, str(exc)
-        serial_label = str(unit["serial"])
-        year_value = int(unit["year"])
-        month_value = int(unit["month"])
+    def start(
+        self,
+        batch: int,
+        year: int,
+        month: int,
+        serial: int,
+        port: str | None,
+        preserve_identity: bool,
+    ) -> tuple[bool, str]:
+        if preserve_identity:
+            unit = {
+                "serial": "preserve identity",
+                "ssid": "",
+                "password": "",
+                "preserve_identity": True,
+            }
+            serial_label = "preserve identity"
+            year_value = year
+            month_value = month
+            log_header = "Starting flash (preserve identity)."
+            log_ssid = "SSID: (preserved)"
+        else:
+            try:
+                unit = PASSWORD_DB.lookup(batch, serial, year, month)
+            except ValueError as exc:
+                return False, str(exc)
+            serial_label = str(unit["serial"])
+            year_value = int(unit["year"])
+            month_value = int(unit["month"])
+            log_header = f"Starting flash for batch {batch:02d} serial {serial:04d} ({year_value:02d}/{month_value:02d})"
+            log_ssid = f"SSID: {unit['ssid']}"
         port_value = (port or "").strip()
         if port_value.lower() == "auto":
             port_value = ""
@@ -572,8 +652,8 @@ class FlashManager:
             self._status_code = "flashing"
             self._status_message = f"Flashing {serial_label}..."
             self._logs = [
-                f"Starting flash for batch {batch:02d} serial {serial:04d} ({year_value:02d}/{month_value:02d})",
-                f"SSID: {unit['ssid']}",
+                log_header,
+                log_ssid,
             ]
             if port_value:
                 self._logs.append(f"Port: {port_value}")
@@ -592,12 +672,27 @@ class FlashManager:
 
     def _run_flash(self, unit: dict[str, object]) -> None:
         success = False
-        serial_suffix = str(unit["serial"])
-        password = str(unit["password"])
+        serial_suffix = str(unit.get("serial", ""))
+        password = str(unit.get("password", ""))
         port_value = str(unit.get("port", "") or "")
         try:
-            command, workdir = build_flash_command(serial_suffix, password, port_value)
-            command_display = " ".join(shlex.quote(part) for part in command[:-1] + ["******"])
+            preserve_identity = bool(unit.get("preserve_identity", False))
+            command, workdir = build_flash_command(serial_suffix, password, port_value, preserve_identity)
+            redacted = []
+            skip_next = False
+            for part in command:
+                if skip_next:
+                    redacted.append("******")
+                    skip_next = False
+                    continue
+                if part in ("--password", "-w", "-Password", "-password"):
+                    redacted.append(part)
+                    skip_next = True
+                else:
+                    redacted.append(part)
+            if skip_next:
+                redacted.append("******")
+            command_display = " ".join(shlex.quote(part) for part in redacted)
             self._append_log(f"Command: {command_display}")
             process = subprocess.Popen(
                 command,
@@ -659,11 +754,19 @@ class FlashRequestHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length).decode("utf-8")
         data = urllib.parse.parse_qs(body)
+        preserve_token = data.get("preserve_identity", ["0"])[0].strip().lower()
+        preserve_identity = preserve_token in ("1", "true", "yes", "on")
         try:
-            batch = int(data.get("batch", [""])[0])
-            year = int(data.get("year", [""])[0])
-            month = int(data.get("month", [""])[0])
-            serial = int(data.get("serial", [""])[0])
+            if preserve_identity:
+                batch = 0
+                year = 0
+                month = 0
+                serial = 0
+            else:
+                batch = int(data.get("batch", [""])[0])
+                year = int(data.get("year", [""])[0])
+                month = int(data.get("month", [""])[0])
+                serial = int(data.get("serial", [""])[0])
             port = data.get("port", [""])[0].strip()
         except (TypeError, ValueError):
             self._json_response(
@@ -672,7 +775,7 @@ class FlashRequestHandler(http.server.BaseHTTPRequestHandler):
             )
             return
 
-        ok, message = self.manager.start(batch, year, month, serial, port)
+        ok, message = self.manager.start(batch, year, month, serial, port, preserve_identity)
         status_code = 200 if ok else 400
         payload = {"ok": ok}
         if not ok:

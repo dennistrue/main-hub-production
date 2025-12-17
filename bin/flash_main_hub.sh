@@ -3,14 +3,15 @@ set -euo pipefail
 
 usage() {
   cat <<USAGE
-Usage: ./flash_main_hub.sh --serial <serial> --password <softap-password> [--port <serial-port>] [--wifi-provision]
+Usage: ./flash_main_hub.sh [--serial <serial> --password <softap-password>] [--port <serial-port>] [--wifi-provision] [--preserve-identity]
 
 Arguments:
-  --serial, -s      Required per-unit serial suffix (alphanumeric/_/-).
-  --password, -w    Required SoftAP password (8-63 ASCII characters).
+  --serial, -s      Required per-unit serial suffix (alphanumeric/_/-) unless --preserve-identity.
+  --password, -w    Required SoftAP password (8-63 ASCII characters) unless --preserve-identity.
   --port, -p        Serial/USB port (default \$MAIN_HUB_SERIAL_PORT or /dev/cu.SLAB_USBtoUART).
   --wifi-provision  Rejoin the factory SSID and call /debug/update after flashing (default: off).
   --skip-ssid       Legacy alias for disabling Wi-Fi provisioning (now the default).
+  --preserve-identity  Skip writing factory config (serial/SSID/password) and Wi-Fi provisioning.
   --help, -h        Show this message.
 USAGE
 }
@@ -19,6 +20,7 @@ SERIAL=""
 PORT="${MAIN_HUB_SERIAL_PORT:-auto}"
 AP_PASSWORD="${MAIN_HUB_AP_PASSWORD:-}"
 WIFI_PROVISION="${MAIN_HUB_WIFI_PROVISION:-0}"
+PRESERVE_IDENTITY="${MAIN_HUB_PRESERVE_IDENTITY:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +44,10 @@ while [[ $# -gt 0 ]]; do
       WIFI_PROVISION=0
       shift
       ;;
+    --preserve-identity)
+      PRESERVE_IDENTITY=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -55,16 +61,22 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${SERIAL}" ]]; then
-  read -r -p "Enter serial suffix (alphanumeric/_/-): " SERIAL
+  if (( PRESERVE_IDENTITY == 1 )); then
+    SERIAL="preserve"
+  else
+    read -r -p "Enter serial suffix (alphanumeric/_/-): " SERIAL
+  fi
 fi
 
-if [[ ! "${SERIAL}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-  echo "Error: serial must be alphanumeric and may include _ or -." >&2
-  exit 1
-fi
-if [[ ${#SERIAL} -gt 50 ]]; then
-  echo "Error: serial exceeds maximum supported length (50 characters)." >&2
-  exit 1
+if (( PRESERVE_IDENTITY != 1 )); then
+  if [[ ! "${SERIAL}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "Error: serial must be alphanumeric and may include _ or -." >&2
+    exit 1
+  fi
+  if [[ ${#SERIAL} -gt 50 ]]; then
+    echo "Error: serial exceeds maximum supported length (50 characters)." >&2
+    exit 1
+  fi
 fi
 
 sanitize_serial_suffix() {
@@ -82,24 +94,39 @@ print(sanitized)
 PY
 }
 
-SERIAL_SANITIZED="$(sanitize_serial_suffix "${SERIAL}")"
-if [[ "${SERIAL_SANITIZED}" != "${SERIAL}" ]]; then
-  echo "Serial sanitized to '${SERIAL_SANITIZED}' for factory config."
+if (( PRESERVE_IDENTITY != 1 )); then
+  SERIAL_SANITIZED="$(sanitize_serial_suffix "${SERIAL}")"
+  if [[ "${SERIAL_SANITIZED}" != "${SERIAL}" ]]; then
+    echo "Serial sanitized to '${SERIAL_SANITIZED}' for factory config."
+  fi
+  SERIAL="${SERIAL_SANITIZED}"
 fi
-SERIAL="${SERIAL_SANITIZED}"
 
 if [[ -z "${AP_PASSWORD}" ]]; then
-  read -r -s -p "Enter SoftAP password (8-63 ASCII characters): " AP_PASSWORD
-  echo
+  if (( PRESERVE_IDENTITY == 1 )); then
+    AP_PASSWORD="preserve"
+  else
+    read -r -s -p "Enter SoftAP password (8-63 ASCII characters): " AP_PASSWORD
+    echo
+  fi
 fi
 
-if [[ ${#AP_PASSWORD} -lt 8 || ${#AP_PASSWORD} -gt 63 ]]; then
-  echo "Error: password must be between 8 and 63 characters." >&2
-  exit 1
+if (( PRESERVE_IDENTITY != 1 )); then
+  if [[ ${#AP_PASSWORD} -lt 8 || ${#AP_PASSWORD} -gt 63 ]]; then
+    echo "Error: password must be between 8 and 63 characters." >&2
+    exit 1
+  fi
+  if ! [[ "${AP_PASSWORD}" =~ ^[[:print:]]+$ ]]; then
+    echo "Error: password must contain printable ASCII characters only." >&2
+    exit 1
+  fi
 fi
-if ! [[ "${AP_PASSWORD}" =~ ^[[:print:]]+$ ]]; then
-  echo "Error: password must contain printable ASCII characters only." >&2
-  exit 1
+
+if (( PRESERVE_IDENTITY == 1 )); then
+  if (( WIFI_PROVISION == 1 )); then
+    echo "Preserve identity enabled; skipping Wi-Fi provisioning." >&2
+    WIFI_PROVISION=0
+  fi
 fi
 
 if [[ "$(uname -s 2>/dev/null || echo unknown)" != "Darwin" ]]; then
@@ -125,10 +152,14 @@ mkdir -p "${LOG_DIR}"
 
 TEMP_FILES=()
 cleanup() {
+  local status=$?
+  trap - EXIT
+  set +e
   local file
   for file in "${TEMP_FILES[@]:-}"; do
     [[ -n "${file}" && -f "${file}" ]] && rm -f "${file}"
   done
+  exit "${status}"
 }
 trap cleanup EXIT
 
@@ -418,8 +449,10 @@ verify_flash_plan() {
     "boot_app0;0xe000;0x10000;${BOOT_APP0_BIN}"
     "firmware;0x10000;0x150000;${FIRMWARE_BIN}"
     "spiffs;0x290000;0x3F0000;${SPIFFS_BIN}"
-    "factory_cfg;0x3F0000;0x400000;${FACTORY_CFG_FLASH_PATH}"
   )
+  if (( INCLUDE_FACTORY_CFG == 1 )); then
+    layout+=("factory_cfg;0x3F0000;0x400000;${FACTORY_CFG_FLASH_PATH}")
+  fi
   local ok=1
   echo "Verifying flash layout and region sizes..."
   local entry
@@ -693,10 +726,20 @@ else
   echo "Flash encryption disabled for this run; writing plaintext images."
 fi
 
-prepare_factory_payload
-if [[ -z "${FACTORY_CFG_FLASH_PATH}" ]]; then
-  echo "Error: failed to prepare factory configuration payload." >&2
-  exit 1
+INCLUDE_FACTORY_CFG=1
+if (( PRESERVE_IDENTITY == 1 )); then
+  INCLUDE_FACTORY_CFG=0
+fi
+if (( INCLUDE_FACTORY_CFG == 0 )); then
+  echo "Preserve identity enabled; skipping factory config partition write."
+fi
+
+if (( INCLUDE_FACTORY_CFG == 1 )); then
+  prepare_factory_payload
+  if [[ -z "${FACTORY_CFG_FLASH_PATH}" ]]; then
+    echo "Error: failed to prepare factory configuration payload." >&2
+    exit 1
+  fi
 fi
 
 flash_cmd=(
@@ -728,8 +771,10 @@ flash_cmd+=(
   0xe000 "${BOOT_APP0_BIN}"
   0x10000 "${FIRMWARE_BIN}"
   0x290000 "${SPIFFS_BIN}"
-  0x3F0000 "${FACTORY_CFG_FLASH_PATH}"
 )
+if (( INCLUDE_FACTORY_CFG == 1 )); then
+  flash_cmd+=(0x3F0000 "${FACTORY_CFG_FLASH_PATH}")
+fi
 
 print_version_overview() {
   echo "---- Build/Flash Versions ----"

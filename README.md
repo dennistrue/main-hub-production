@@ -22,6 +22,7 @@ The script starts a tiny local web server, opens your default browser, and promp
 - Password: looked up from the local password database
 
 Hit **Next** to advance to the next serial within the same batch (up to 100). When you click **Flash**, the GUI spawns `flash_main_hub.sh` on macOS or `flash_main_hub.ps1` on Windows automatically, streams their logs live, and marks the status as **Success**/**Failed** when done.
+Need to update firmware without touching a unit's identity? Enable **Preserve existing SSID/serial/password** to skip factory provisioning and keep whatever is already stored on the device.
 
 ### One-click launchers
 
@@ -57,8 +58,10 @@ Because the flashing scripts, tools, and release artifacts all live in this fold
 
 ## Script Usage
 
-- **macOS:** `./flash_main_hub.sh --serial 1234 --password softap-pass`
-- **Windows:** `pwsh -ExecutionPolicy Bypass -File .\flash_main_hub.ps1 -Serial 1234 -Password softap-pass [-Port COM3] [ -FlashEncryptionKeyFile .\keys\flash_encryption_key.bin ]`
+- **macOS:** `./flash_main_hub.sh --serial 1234 --password softap-pass [--preserve-identity]`
+- **Windows:** `pwsh -ExecutionPolicy Bypass -File .\flash_main_hub.ps1 -Serial 1234 -Password softap-pass [-Port COM3] [-PreserveIdentity] [ -FlashEncryptionKeyFile .\keys\flash_encryption_key.bin ]`
+
+`--preserve-identity` / `-PreserveIdentity` skips writing the factory config partition and disables Wi-Fi provisioning, leaving the existing serial/SSID/password intact.
 
 Both scripts derive the factory payload from the provided serial/password, encrypt it when `manifest.json` reports `"flash_encryption": "enabled"`, and log each attempt to `logs/flash_log.csv`.
 
