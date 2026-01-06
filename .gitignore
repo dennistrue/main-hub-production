@@ -1,2 +1,6 @@
 bin/keys/
 bin/logs/
+.DS_Store
+*.sdup
+*.sdup2
+bin/sd-staging/
