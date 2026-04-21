@@ -15,13 +15,13 @@ Both launchers simply `cd bin` and run `flash_gui.py`, so everything the operato
 python3 flash_gui.py
 ```
 
-The script starts a tiny local web server, opens your default browser, and prompts for a batch number plus the serial index (001‑100). It automatically derives:
+The script starts a tiny local web server, opens your default browser, and prompts for a batch number plus the serial index (0001‑9999). It automatically derives:
 
 - Serial suffix: `CC<batch (two digits)>-<year (two digits)><month (two digits)><serial_in_batch padded to 4 digits>` (e.g. batch 1, Nov 2025, serial 7 ⇒ `CC01-25110007`)
 - SSID: identical to the serial (e.g. `CC01-25110007`)
 - Password: looked up from the local password database
 
-Hit **Next** to advance to the next serial within the same batch (up to 100). When you click **Flash**, the GUI spawns `flash_main_hub.sh` on macOS or `flash_main_hub.ps1` on Windows automatically, streams their logs live, and marks the status as **Success**/**Failed** when done.
+Hit **Next** to advance to the next serial within the same batch. When you click **Flash**, the GUI spawns `flash_main_hub.sh` on macOS or `flash_main_hub.ps1` on Windows automatically, streams their logs live, and marks the status as **Success**/**Failed** when done.
 Need to update firmware without touching a unit's identity? Enable **Preserve existing SSID/serial/password** to skip factory provisioning and keep whatever is already stored on the device.
 
 ### One-click launchers
@@ -40,11 +40,11 @@ Prerequisites:
 
 `flash_gui.py` (and the backend API) read passwords from `passwords.csv`, a simple CSV with headers `batch,serial,password`. Entry requirements:
 
-- `serial` must be between 1 and 100 (inclusive) for each batch.
+- `serial` must be between 1 and 9999 (inclusive) for each batch.
 - Passwords must be 8–63 printable ASCII characters.
 - Each `(batch, serial)` pair must be unique.
 
-This repo ships with `passwords.csv` pre-populated for **batch 01** (`serial` 0001‑0100) using easy-to-type lowercase word pairs plus digits (e.g. `amber-river1853`). The numeric suffix does **not** match the serial number, so operators can’t infer other passwords. Add new rows for additional batches before running the GUI; follow the same hyphenated `word-wordNNNN` pattern so passwords remain human-friendly. You can regenerate the CSV via `python3 scripts/generate_passwords.py --batch 2 --count 100 --seed <seed> --output main-hub-production/bin/passwords.csv`.
+This repo ships with `passwords.csv` pre-populated for **batch 01** using easy-to-type lowercase word pairs plus digits (e.g. `amber-river1853`). The numeric suffix does **not** match the serial number, so operators can’t infer other passwords. Add new rows for additional batches before running the GUI; follow the same hyphenated `word-wordNNNN` pattern so passwords remain human-friendly. You can regenerate the CSV via `python3 scripts/generate_passwords.py --batch 3 --count 150 --seed <seed> --output main-hub-production/bin/passwords.csv`.
 
 ## Distribution to Operators
 
